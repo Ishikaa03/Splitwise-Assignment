@@ -1,7 +1,10 @@
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const { PrismaPg } = require('@prisma/adapter-pg');
+
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   const existing = await prisma.user.findUnique({ where: { email: 'demo1@test.com' } });
