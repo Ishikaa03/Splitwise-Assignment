@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  groupsCreated  Group[]        @relation("GroupCreator")
+  groupMembers   GroupMember[]
+  expensesPaid   Expense[]      @relation("ExpensePaidBy")
+  expensesLogged Expense[]      @relation("ExpenseCreatedBy")
+  expenseSplits  ExpenseSplit[]
+  paymentsSent   Payment[]      @relation("PaymentPayer")
+  paymentsRecv   Payment[]      @relation("PaymentReceiver")
+  messages       Message[]
+}
+
+model Group {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  createdBy   String
+  creator     User      @relation("GroupCreator", fields: [createdBy], references: [id])
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  members  GroupMember[]
+  expenses Expense[]
+  payments Payment[]
+}
+
+model GroupMember {
+  id       String    @id @default(uuid())
+  groupId  String
+  userId   String
+  joinedAt DateTime  @default(now())
+  leftAt   DateTime?
+
+  group Group @relation(fields: [groupId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@unique([groupId, userId])
+}
+
+model Expense {
+  id          String    @id @default(uuid())
+  groupId     String
+  description String
+  amount      Decimal   @db.Decimal(10, 2)
+  paidById    String
+  createdById String
+  splitType   String
+  expenseDate DateTime  @db.Date
+  notes       String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  group     Group          @relation(fields: [groupId], references: [id])
+  paidBy    User           @relation("ExpensePaidBy", fields: [paidById], references: [id])
+  createdBy User           @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+  splits    ExpenseSplit[]
+  messages  Message[]
+}
+
+model ExpenseSplit {
+  id         String  @id @default(uuid())
+  expenseId  String
+  userId     String
+  amountOwed Decimal @db.Decimal(10, 2)
+
+  expense Expense @relation(fields: [expenseId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+}
+
+model Payment {
+  id         String   @id @default(uuid())
+  groupId    String
+  payerId    String
+  receiverId String
+  amount     Decimal  @db.Decimal(10, 2)
+  note       String?
+  createdAt  DateTime @default(now())
+
+  group    Group @relation(fields: [groupId], references: [id])
+  payer    User  @relation("PaymentPayer", fields: [payerId], references: [id])
+  receiver User  @relation("PaymentReceiver", fields: [receiverId], references: [id])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  expenseId String
+  userId    String?
+  content   String
+  type      String   @default("user")
+  createdAt DateTime @default(now())
+
+  expense Expense @relation(fields: [expenseId], references: [id])
+  user    User?   @relation(fields: [userId], references: [id])
+}

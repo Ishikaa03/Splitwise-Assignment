@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(mkdir \"d:\\\\Splitwise Assignment\\\\server\")",
+      "Bash(npm init *)",
+      "Bash(npx prisma *)",
+      "Bash(mkdir \"d:\\\\Splitwise Assignment\\\\client\\\\src\\\\contexts\" \"d:\\\\Splitwise Assignment\\\\client\\\\src\\\\pages\" \"d:\\\\Splitwise Assignment\\\\client\\\\src\\\\components\" \"d:\\\\Splitwise Assignment\\\\client\\\\src\\\\components\\\\modals\" \"d:\\\\Splitwise Assignment\\\\client\\\\src\\\\lib\")",
+      "Bash(mkdir \"d:\\\\Splitwise Assignment\\\\server\\\\routes\" \"d:\\\\Splitwise Assignment\\\\server\\\\controllers\" \"d:\\\\Splitwise Assignment\\\\server\\\\middleware\" \"d:\\\\Splitwise Assignment\\\\server\\\\lib\")",
+      "Bash(npm run *)"
+    ]
+  }
+}
