@@ -1,11 +1,206 @@
 # BUILD_PLAN.md — Splitwise Clone
 
-> Based entirely on `AI_CONTEXT.md`. Read that file first for full context on every decision made here.
-> This plan is sequenced to hit the Day 1 hard constraint: **live URL accepting login + all backend routes functional by end of Day 1.**
+---
+
+## 1. Product Research
+
+### How I studied Splitwise
+Used Splitwise personally. Analysed the core user journey end-to-end: create a group → add an expense → split it → see who owes what → settle up. Everything in the app exists to serve this one loop.
+
+### What I learned
+- Core value loop: **Create group → Add expense → Split → See balances → Settle up → Repeat**
+- 4 split types: equal, unequal, percentage, shares (ratios)
+- Balances are pairwise — who owes whom inside a group
+- "Settle up" is a payment record that reduces a balance
+- Each expense has a chat thread for discussion
+- Many Splitwise features (multi-currency, recurring expenses, receipt scanning, activity feed, debt simplification) are not part of the core loop
+
+### Workflows identified
+1. Auth — register → JWT cookie → session persists 7 days
+2. Group — create → invite members by email → manage membership
+3. Expense — add expense → select payer → choose split type → input amounts → save
+4. Balances — pairwise per group + overall summary on dashboard
+5. Settlement — click "Settle up" → pre-filled modal → record partial or full payment
+
+### Product assumptions made
+- Single currency (INR) — no conversion logic
+- Group creator = admin, no admin transfer
+- Pairwise balances only, no debt simplification algorithm
+- Users must register before being added to a group (no invite email)
+- Balance computed live at query time — not stored as running totals
+- Payer can be excluded from the split
 
 ---
 
-## Overview
+## 2. Architecture
+
+### Tech Stack
+| Layer | Choice | Reason |
+|---|---|---|
+| Frontend | React 18 + Vite + TailwindCSS | Fast dev server, SPA (app is behind auth wall), familiar |
+| Routing | React Router v6 | Client-side SPA routing |
+| HTTP | Axios + 401 interceptor | `withCredentials: true` for cookies; auto-redirect on auth failure |
+| Real-time | Socket.io-client | Per-expense chat rooms |
+| Backend | Node.js + Express 5 | Same language front/back, minimal boilerplate |
+| ORM | Prisma 7 + `@prisma/adapter-pg` | Type-safe queries; Prisma 7 requires adapter for new JS client engine |
+| Database | PostgreSQL | Relational (required by assignment), DECIMAL for money |
+| Frontend deploy | Vercel | SPA hosting, auto-deploy from GitHub |
+| Backend + DB deploy | Railway | Persistent Node.js process needed for Socket.io |
+
+### Database Schema (7 tables)
+`User` → `GroupMember` → `Group` → `Expense` → `ExpenseSplit` → `Payment` → `Message`
+
+Key decisions:
+- `expenses.paid_by` ≠ `expenses.created_by` — payer and recorder are separate fields
+- `expense_splits` — one row per member; hard-deleted and recreated on expense edit
+- `payments` — completely separate table from expenses (settlements ≠ expenses)
+- Soft delete on `Group` and `Expense`; hard delete on `Payment` (no child records)
+- `group_members.left_at` — soft exit; re-adding sets `left_at = NULL` (history preserved)
+
+### API Design
+RESTful, base `/api/v1`, consistent envelope: `{ success, data, error, details }`
+Routes: `/auth/*`, `/groups/*`, `/expenses/*`, `/payments/*`, `/messages/*`
+
+### Frontend Structure
+```
+client/src/
+  contexts/   AuthContext (JWT + BroadcastChannel logout), SocketContext
+  pages/      Login, Register, Dashboard, GroupDetail, ExpenseDetail
+  components/ Navbar, ProtectedRoute, modals/ (Create/AddExpense/SettleUp)
+  lib/        axios.js (instance + 401 interceptor with path exclusion)
+```
+
+### Deployment Approach
+- Vercel for frontend. `client/vercel.json` with SPA rewrite rule required for React Router
+- Railway for backend (Node.js) + PostgreSQL (internal networking, same project)
+- `postinstall` script runs `prisma generate` at build time (Prisma 7 cannot generate at runtime on Railway)
+- Migrations run via `prisma migrate deploy` on every server start
+- Seed runs once manually after first deploy
+
+---
+
+## 3. AI Collaboration Process
+
+### How I instructed the AI
+Pasted the exact required prompt from the assignment. Instructed Claude to act as a junior engineer — interview me before building, not assume requirements, update `AI_CONTEXT.md` after every answer.
+
+### What questions the AI asked
+4 rounds of structured interview:
+- **Round 1**: Product goals, Splitwise research, core workflows, personas, MVP scope, out-of-scope features, UX pain points with Splitwise
+- **Round 2**: Auth persistence, cross-tab logout, group membership rules (leave/remove/delete), expense fields, settlements (separate table decision), balance calculation method
+- **Round 3**: Tech stack choices, all 5 screens + layouts, add expense modal form flow, Socket.io cross-origin cookie auth, what is/isn't real-time
+- **Round 4**: Specific UI layouts, edge cases (concurrent edits, mid-form removal), top 3 build risks, least confident decision, bug handling in live demo
+
+### How I answered
+Each answer covered PM reasoning (why this decision serves the product) + dev reasoning (implementation implications). Example: balance calculation — chose "live at query time" because correctness > speed at MVP scale, eliminates stale-data bugs entirely.
+
+### How the plan evolved
+- Timeline: 3-day scoped → 2-day
+- Monorepo decided over two separate repos (one GitHub link for submission)
+- Day 1 hard constraint: live URL accepting login before any frontend work
+- Discovered during build: Prisma 7 requires `@prisma/adapter-pg` (breaking change from v5/v6)
+- Discovered: Vercel returns 404 on all React Router routes without `vercel.json`
+- Discovered: Axios 401 interceptor must exclude `/login` and `/register` paths
+
+### How AI_CONTEXT.md was maintained
+Updated after every interview round. Every implementation issue discovered during build was immediately added (Prisma 7 adapter, vercel.json, interceptor path fix). Grew from initial scope document to 700+ line source of truth.
+
+---
+
+## 4. Tradeoffs
+
+### What I simplified
+- **Balance computation**: live query (always correct) vs stored totals (faster but can drift). Chose live for accuracy.
+- **Pairwise balances only**: skipped debt simplification graph algorithm — too risky in 2 days
+- **No invite email**: users must self-register — eliminated email service entirely
+
+### What I hardcoded
+- 7-day JWT expiry (no refresh tokens)
+- Last 50 messages per expense chat thread
+- Demo seed: 3 users, 1 "Goa Trip" group, 4 expenses (all split types), 3 chat messages, 1 partial settlement
+
+### What I avoided
+| Feature | Reason |
+|---|---|
+| Debt simplification | Graph min-cash-flow algorithm — bug risk too high |
+| Email notifications | Async queue + email service = full sub-system |
+| Receipt scanning | File storage + OCR = full sub-system |
+| Activity feed | Events table + real-time feed overhead |
+| Recurring expenses | Cron/scheduler needed |
+| Social login (OAuth) | Setup overhead for zero demo value |
+| Multiple currencies | Rate API + conversion logic |
+
+### What I would improve with more time
+1. Stored running balance totals with cache invalidation (performance at scale)
+2. Real-time expense list + balance updates via Socket.io group rooms
+3. Debt simplification using min-cash-flow algorithm
+4. Email notifications when someone adds an expense
+5. Admin transfer (group creator handoff)
+6. Server-side session store (logout from all devices)
+7. Automated test suite (unit + integration)
+
+---
+
+## 5. Key Prompts Used
+
+### Initial prompt (from assignment)
+```
+You are a junior engineer helping me complete an internship assignment.
+
+The assignment is to reverse engineer Splitwise, scope a realistic 3-day version,
+and build a working deployed app.
+
+Important instructions:
+1. Do not assume product requirements.
+2. Do not jump directly into implementation.
+3. Ask me detailed questions about product scope, UX, workflows, edge cases, and
+   engineering decisions.
+4. Ask about every implementation detail needed to build the app.
+5. After each answer I give, update a Markdown file called AI_CONTEXT.md.
+6. AI_CONTEXT.md must become the source of truth for the entire project.
+7. The final app must be buildable from AI_CONTEXT.md.
+8. Another evaluator should be able to paste AI_CONTEXT.md into the same AI tool
+   and recreate a similar app.
+9. Before writing code, produce a build plan based only on the agreed context.
+10. During implementation, keep updating AI_CONTEXT.md whenever requirements,
+    architecture, schema, UI, or logic changes.
+11. Do not recommend technical solutions. Your job is to let me think through the
+    technical solution.
+
+Start by interviewing me across: product goals, Splitwise research, core workflows,
+user personas, MVP scope, out-of-scope features, data model, authentication, groups,
+expenses, settlements, balance calculation, UI screens, routing, frontend architecture,
+backend architecture, database choice, API design, deployment, testing, known risks,
+tradeoffs.
+
+Do not give me a final plan until you have asked enough questions.
+```
+
+### Key follow-up prompts during build
+- "start building" — triggered implementation after interview + plan approval
+- "Continue from where you left off" — resumed build after interruptions
+- Deployment debugging prompts: pasting Railway crash logs for diagnosis each time
+
+---
+
+## 6. Technical Build Timeline
+
+| Time | Focus | Hard checkpoint |
+|---|---|---|
+| Day 1 AM | Monorepo + skeleton deploy | Cross-origin cookie auth verified in production |
+| Day 1 PM | Full backend — all routes, Prisma, migrations | All API endpoints return correct responses |
+| Day 1 EVE | Frontend auth + dashboard | Login → dashboard works on live URL |
+| Day 2 AM | Group detail, Add expense (all 4 split types), balances | Balance numbers verified by hand |
+| Day 2 PM | Socket.io chat, Settle up, seed script | Real-time chat works cross-origin |
+| Day 2 EVE | Polish, test, finalize docs | All flows work end-to-end |
+
+### Critical fixes discovered during build
+1. **Prisma 7 + `@prisma/adapter-pg`** — `new PrismaClient()` throws without adapter
+2. **`client/vercel.json`** — React Router needs rewrite rule or Vercel returns 404
+3. **Axios 401 interceptor** — must skip redirect on `/login`/`/register` or page loops
+4. **`postinstall` script** — `prisma generate` must run at build time on Railway
+5. **Cookie config** — `SameSite=None; Secure` required for cross-origin cookie transmission
+
 
 | Day | Focus | Hard checkpoint |
 |---|---|---|
