@@ -47,7 +47,7 @@ All 4 features map directly to this loop. Nothing is built outside it.
 - Persistence: JWT in httpOnly cookie, 7-day expiry, `SameSite=None; Secure=true` (required for cross-origin)
 - Session check: `GET /api/v1/auth/me` on every app load → result stored in `AuthContext`
 - Logout: `POST /api/v1/auth/logout` → server clears cookie → `BroadcastChannel('auth').postMessage('logout')` → all tabs redirect to `/login`
-- 401 handling: global Axios interceptor catches any 401 → redirects to `/login`
+- 401 handling: global Axios interceptor catches any 401 → redirects to `/login` **only if current path is not `/login` or `/register`** (without this check, the `/auth/me` call on the login page returns 401 and causes an infinite redirect loop)
 - No refresh token; no logout-from-all-devices (known limitation)
 
 ### 2.2 Group Management
@@ -357,12 +357,21 @@ Shared utility: `canExitGroup(userId, groupId)` — used by both leave and remov
 | Concern | Choice |
 |---|---|
 | Runtime | Node.js |
-| Framework | Express |
-| ORM | Prisma (`prisma.$queryRaw` for balance aggregation) |
+| Framework | Express 5 |
+| ORM | Prisma 7 (`prisma-client-js` generator, `@prisma/adapter-pg` required) |
+| DB Adapter | `@prisma/adapter-pg` + `pg` — **required by Prisma 7's new client engine** |
 | Auth | bcrypt (hashing) + jsonwebtoken (JWT) |
 | Cookie | cookie-parser |
 | CORS | `cors` package, `credentials: true`, `origin: CLIENT_URL` (exact URL, not wildcard) |
 | Real-time | Socket.io (same process and port as Express) |
+
+**Critical Prisma 7 note:** Prisma 7 requires a database adapter — `new PrismaClient()` without one throws `PrismaClientInitializationError`. Always initialize as:
+```js
+const { PrismaClient } = require('@prisma/client');
+const { PrismaPg } = require('@prisma/adapter-pg');
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter });
+```
 
 ### Database
 | Concern | Choice |
@@ -435,6 +444,12 @@ Shared utility: `canExitGroup(userId, groupId)` — used by both leave and remov
 | `/groups/:groupId/expenses/:expenseId` | ExpenseDetail.jsx | Yes |
 
 `ProtectedRoute`: calls `GET /api/v1/auth/me` on load; no valid cookie → redirect `/login`.
+
+**Critical: `client/vercel.json` required for SPA routing on Vercel:**
+```json
+{ "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }
+```
+Without this, any direct URL access (e.g. `/dashboard`) returns Vercel 404.
 
 **Modals (no URL — overlays on parent page):**
 - CreateGroupModal (Dashboard)
